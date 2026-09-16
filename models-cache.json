@@ -1,10 +1,11 @@
 {
-  "updated_at": 1787548970,
+  "updated_at": 1789539411,
   "models": [
     {
       "id": "GLM-5.2",
       "object": "model",
       "owned_by": "codearts",
+      "channel": "agent",
       "name": "GLM-5.2",
       "description": "",
       "context_window": 202752,
@@ -13,24 +14,14 @@
       "enable_queue": true
     },
     {
-      "id": "openpangu-2.0-flash",
+      "id": "glm-5.2-sft-harmony",
       "object": "model",
       "owned_by": "codearts",
-      "name": "openpangu-2.0-flash",
-      "description": "",
-      "context_window": 524288,
-      "max_tokens": 131072,
-      "supports_images": false,
-      "enable_queue": true
-    },
-    {
-      "id": "GLM-4.7-SFT-Harmony",
-      "object": "model",
-      "owned_by": "codearts",
-      "name": "GLM-4.7-SFT-Harmony",
+      "channel": "agent",
+      "name": "glm-5.2-sft-harmony",
       "description": "",
       "context_window": 202752,
-      "max_tokens": 65536,
+      "max_tokens": 131072,
       "supports_images": false,
       "enable_queue": true
     },
@@ -38,7 +29,20 @@
       "id": "openpangu-2.0-pro",
       "object": "model",
       "owned_by": "codearts",
+      "channel": "agent",
       "name": "openpangu-2.0-pro",
+      "description": "",
+      "context_window": 524288,
+      "max_tokens": 131072,
+      "supports_images": false,
+      "enable_queue": true
+    },
+    {
+      "id": "openpangu-2.0-flash",
+      "object": "model",
+      "owned_by": "codearts",
+      "channel": "agent",
+      "name": "openpangu-2.0-flash",
       "description": "",
       "context_window": 524288,
       "max_tokens": 131072,
@@ -49,12 +53,46 @@
       "id": "Qwen3-VL-235B",
       "object": "model",
       "owned_by": "codearts",
+      "channel": "agent",
       "name": "Qwen3-VL-235B",
       "description": "",
       "context_window": 1048576,
       "max_tokens": 131072,
       "supports_images": true,
       "enable_queue": true
+    },
+    {
+      "id": "deepseek-v4-flash-0731",
+      "object": "model",
+      "owned_by": "codearts",
+      "channel": "benefit",
+      "name": "deepseek-v4-flash-0731",
+      "description": "免费额度模型（签到领取）",
+      "context_window": 1048576,
+      "max_tokens": 393216,
+      "supports_images": false
+    },
+    {
+      "id": "deepseek-v4-pro-0813",
+      "object": "model",
+      "owned_by": "codearts",
+      "channel": "benefit",
+      "name": "deepseek-v4-pro-0813",
+      "description": "免费额度模型（签到领取）",
+      "context_window": 1048576,
+      "max_tokens": 393216,
+      "supports_images": false
+    },
+    {
+      "id": "glm-5.3-flash",
+      "object": "model",
+      "owned_by": "codearts",
+      "channel": "benefit",
+      "name": "glm-5.3-flash",
+      "description": "免费额度模型（签到领取）",
+      "context_window": 1048576,
+      "max_tokens": 131072,
+      "supports_images": false
     }
   ]
 }

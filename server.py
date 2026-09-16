@@ -39,12 +39,27 @@ HOST = "snap-access.cn-north-4.myhuaweicloud.com"
 AGENT_LIST_URL = BASE_URL + "/v1/agent-center/agents/useragents?offset=0&limit=100"
 AGENT_DETAIL_PATH = "/v1/agent-center/agents/detail"
 
-# 自动同步失败时的兜底列表；正常启动会用云端返回的列表覆盖它
-FALLBACK_MODELS = ["openpangu-2.0-pro", "openpangu-2.0-flash", "GLM-5.2"]
+# 自动同步失败时的兜底列表（仅老套餐模型，走 AgentCenter 通道）；正常启动会用云端返回的列表覆盖它
+FALLBACK_AGENT_MODELS = ["openpangu-2.0-pro", "openpangu-2.0-flash", "GLM-5.2"]
+# 免费模型兜底列表（IDE 抓包确认）：走 maas_type=benefit 通道，签名时必须额外携带
+# maas_type / model-id / model-name 三个头，否则报 "model is not registered"；
+# 老套餐模型带上这些头反而会报 "unsupported model"，因此两条通道严格区分。
+BENEFIT_MODELS = [
+    "glm-5.3-flash",
+    "deepseek-v4-pro-0813",
+    "deepseek-v4-flash-0731",
+]
+FALLBACK_MODELS = FALLBACK_AGENT_MODELS + BENEFIT_MODELS
+# opengw 免费额度网关（IDE 抓包确认）：永久 AK/SK 即可访问，gateway/config 返回免费模型列表
+OPENGW_BASE = "https://opengw.developer.huaweicloud.com"
+OPENGW_CONFIG_URL = OPENGW_BASE + "/api/v1/gateway/config"
 # 模型缓存与代理程序放在同一目录，便于迁移、备份和排查
 MODEL_CACHE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "models-cache.json"
 )
+# AgentCenter 通道模型（决定是否用 benefit 签名；不在其中的模型一律按 benefit 处理，
+# 这样 IDE 以后新增免费模型无需改代码，直接传模型名即可）
+AGENT_MODELS = list(FALLBACK_AGENT_MODELS)
 SUPPORTED_MODELS = list(FALLBACK_MODELS)
 MODEL_DETAILS = {}
 
@@ -101,8 +116,12 @@ def _signed_request(method: str, url: str, body: bytes = b"", extra_headers=None
     )
 
 
-def _hmac_headers(body: bytes) -> dict:
-    """构造华为云 SDK-HMAC-SHA256 签名请求头（仅适用于 POST /api/v2/chat/completions）。"""
+def _hmac_headers(body: bytes, benefit: bool = False, model_id: str = "") -> dict:
+    """构造华为云 SDK-HMAC-SHA256 签名请求头（仅适用于 POST /api/v2/chat/completions）。
+
+    benefit=True 时按 IDE 免费模型通道附加 maas_type / model-id / model-name 三个头，
+    这三个头必须参与签名，否则上游返回 "The model is not registered"。
+    """
     now = datetime.datetime.now(datetime.timezone.utc)
     sdk_date = now.strftime("%Y%m%dT%H%M%SZ")
 
@@ -112,6 +131,10 @@ def _hmac_headers(body: bytes) -> dict:
         "content-type": "application/json",
         "x-sdk-date": sdk_date,
     }
+    if benefit and model_id:
+        headers["maas_type"] = "benefit"
+        headers["model-id"] = model_id
+        headers["model-name"] = model_id
 
     signed_names = sorted(headers.keys())
     canonical_headers = "".join(f"{k}:{headers[k].strip()}\n" for k in signed_names)
@@ -149,6 +172,14 @@ def _load_model_cache() -> bool:
             return False
         SUPPORTED_MODELS = [item["id"] for item in models if item.get("id")]
         MODEL_DETAILS = {item["id"]: item for item in models if item.get("id")}
+        # 缓存里的 AgentCenter 模型参与通道判断；旧缓存无 channel 字段时默认
+        # 视为 agent 通道；不在缓存里的新模型一律按 benefit 处理。
+        AGENT_MODELS.clear()
+        AGENT_MODELS.extend(
+            item["id"]
+            for item in models
+            if item.get("channel", "agent") == "agent"
+        )
         return bool(SUPPORTED_MODELS)
     except (OSError, ValueError, TypeError, KeyError):
         return False
@@ -166,8 +197,42 @@ def _save_model_cache(models) -> None:
     os.replace(temp_path, MODEL_CACHE_PATH)
 
 
+def _refresh_benefit_models() -> list:
+    """从 opengw 免费额度网关动态获取免费模型列表（IDE 抓包确认的接口）。
+
+    返回模型详情列表；失败时返回空列表，由调用方回退到 BENEFIT_MODELS 兜底。
+    """
+    try:
+        response = _signed_request("GET", OPENGW_CONFIG_URL, timeout=30)
+        response.raise_for_status()
+        result = response.json().get("result") or {}
+        models = result.get("models") or []
+        discovered = []
+        for model in models:
+            model_id = model.get("model_id")
+            if not model_id or any(item["id"] == model_id for item in discovered):
+                continue
+            discovered.append(
+                {
+                    "id": model_id,
+                    "object": "model",
+                    "owned_by": "codearts",
+                    "channel": "benefit",
+                    "name": model.get("model_name") or model_id,
+                    "description": "免费额度模型（签到领取）",
+                    "context_window": model.get("context_window"),
+                    "max_tokens": model.get("max_tokens"),
+                    "supports_images": False,
+                }
+            )
+        return discovered
+    except (requests.RequestException, ValueError, TypeError, KeyError) as error:
+        print("免费模型列表同步失败，将使用兜底列表:", error)
+        return []
+
+
 def _refresh_models() -> bool:
-    """从 CodeArts AgentCenter 获取当前账号可用模型。"""
+    """从 CodeArts AgentCenter 获取当前账号可用模型（仅老套餐通道）。"""
     global SUPPORTED_MODELS, MODEL_DETAILS
     try:
         # 与 CodeArts CLI 抓包一致：AgentCenter 接口需要这个路由头。
@@ -228,6 +293,7 @@ def _refresh_models() -> bool:
                         "id": model_id,
                         "object": "model",
                         "owned_by": "codearts",
+                        "channel": "agent",
                         "name": model.get("model_alias") or model.get("model_name") or model_id,
                         "description": model.get("model_desc") or "",
                         "context_window": params.get("context_window"),
@@ -242,8 +308,25 @@ def _refresh_models() -> bool:
 
         if not discovered:
             return False
+        # benefit 免费模型不在 AgentCenter 列表里，从 opengw 网关动态同步；
+        # 同步失败时回退到 BENEFIT_MODELS 兜底，保证 /v1/models 可见。
+        benefit_models = _refresh_benefit_models()
+        if not benefit_models:
+            benefit_models = [
+                {"id": model_id, "channel": "benefit", "object": "model",
+                 "owned_by": "codearts", "name": model_id}
+                for model_id in BENEFIT_MODELS
+            ]
+        known = {item["id"] for item in discovered}
+        for item in benefit_models:
+            if item["id"] not in known:
+                discovered.append(item)
         SUPPORTED_MODELS = [item["id"] for item in discovered]
         MODEL_DETAILS = {item["id"]: item for item in discovered}
+        AGENT_MODELS.clear()
+        AGENT_MODELS.extend(
+            item["id"] for item in discovered if item.get("channel") == "agent"
+        )
         _save_model_cache(discovered)
         print("已自动同步模型:", ", ".join(SUPPORTED_MODELS))
         return True
@@ -484,12 +567,16 @@ def chat_completions():
         )
     req_json["model"] = model
 
+    # 通道判断：AgentCenter 老套餐模型用基础签名；其余（免费 benefit 模型）
+    # 必须带 maas_type/model-id/model-name 三个签名头，否则上游报未注册。
+    benefit = model not in AGENT_MODELS
+
     # 客户端是否要流式
     want_stream = bool(req_json.get("stream", False))
 
     # 重新序列化 body（确保与签名时一致）
     body = json.dumps(req_json, ensure_ascii=False).encode("utf-8")
-    headers = _hmac_headers(body)
+    headers = _hmac_headers(body, benefit=benefit, model_id=model)
 
     try:
         upstream = requests.post(
@@ -518,52 +605,80 @@ def chat_completions():
 
     if want_stream:
         def generate():
-            """严格转发为 OpenAI SSE，确保每个事件只有一个 JSON 文档。"""
+            """严格转发为 OpenAI SSE；仅对 benefit 流补齐缺失的结束原因。"""
             content_type = (upstream.headers.get("Content-Type") or "").lower()
+            is_benefit = model not in AGENT_MODELS
             saw_done = False
+            saw_finish_reason = False
 
             # 上游偶尔会在请求 stream=true 时返回普通 JSON，包装成单个 SSE 帧。
             if "text/event-stream" not in content_type:
                 result = _parse_upstream_json(upstream)
-                payload = json.dumps(
-                    result, ensure_ascii=False, separators=(",", ":")
-                ).encode("utf-8")
+                for choice in result.get("choices") or []:
+                    if choice.get("finish_reason") in (None, "other"):
+                        choice["finish_reason"] = "stop"
+                payload = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
                 yield b"data: " + payload + b"\n\n"
                 yield b"data: [DONE]\n\n"
                 return
 
             for raw_line in upstream.iter_lines(decode_unicode=False):
                 if not raw_line:
-                    # SSE 事件的空行由下面的 data 分支统一输出，避免多余分隔符。
                     continue
                 if not raw_line.startswith(b"data:"):
-                    # SSE 注释（例如心跳）原样保留，但统一使用标准换行。
                     if raw_line.startswith(b":"):
                         yield raw_line + b"\n\n"
                     continue
 
                 payload = raw_line[5:].strip()
                 if payload == b"[DONE]":
-                    if not saw_done:
-                        yield b"data: [DONE]\n\n"
+                    # benefit 流需要先确认是否缺少 finish_reason；agent 流则保持
+                    # 原来的即时转发行为，避免改变 agent 客户端状态机。
+                    if not is_benefit:
+                        if not saw_done:
+                            yield b"data: [DONE]\n\n"
+                            saw_done = True
+                    else:
                         saw_done = True
                     continue
                 try:
                     chunk = json.loads(payload.decode("utf-8"))
                     for choice in chunk.get("choices") or []:
-                        if choice.get("finish_reason") in (None, "other"):
-                            # 只有已明确结束或上游发送空结束原因时才补 stop。
-                            if choice.get("finish_reason") == "other":
+                        reason = choice.get("finish_reason")
+                        if reason is not None:
+                            saw_finish_reason = True
+                            if reason == "other":
                                 choice["finish_reason"] = "stop"
-                    payload = json.dumps(
-                        chunk, ensure_ascii=False, separators=(",", ":")
-                    ).encode("utf-8")
+                        # DeepSeek benefit 流会发送 content:null、reasoning_content 有值。
+                        # 部分 Agent Runtime 只接受字符串 content，会将 null chunk
+                        # 误判为无响应；OpenAI 兼容格式中空字符串表达同样语义。
+                        delta = choice.get("delta")
+                        if isinstance(delta, dict) and delta.get("content") is None:
+                            delta["content"] = ""
+                    payload = json.dumps(chunk, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
                     yield b"data: " + payload + b"\n\n"
                 except (UnicodeDecodeError, json.JSONDecodeError):
-                    # 丢弃无法解析的上游行，不能将它与下一个 JSON 拼接给客户端。
                     continue
 
-            if not saw_done:
+            # 只对免费 benefit 模型补齐完全缺失的 finish_reason；不重发任何上游 chunk。
+            if is_benefit and not saw_finish_reason:
+                yield b"data: " + json.dumps(
+                    {
+                        "id": "proxy-finish",
+                        "object": "chat.completion.chunk",
+                        "created": int(time.time()),
+                        "model": model,
+                        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                    }, ensure_ascii=False, separators=(",", ":")
+                ).encode("utf-8") + b"\n\n"
+            if is_benefit and not saw_done:
+                yield b"data: [DONE]\n\n"
+            elif is_benefit:
+                # 上游 [DONE] 被延迟到这里，确保补块在 [DONE] 之前。
+                yield b"data: [DONE]\n\n"
+            # agent 分支保持原有行为：如果上游异常断流、没有发送 [DONE]，
+            # 代理仍补一个 [DONE]，与修改前的实现一致。
+            if not is_benefit and not saw_done:
                 yield b"data: [DONE]\n\n"
 
         resp = Response(generate(), status=200, mimetype="text/event-stream")
