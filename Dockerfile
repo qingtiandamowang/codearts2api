@@ -30,8 +30,10 @@ USER appuser
 
 EXPOSE 8787
 
-# 仅做 TCP 探活，不请求 /v1/models，避免健康检查消耗上游额度
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+# 仅做 TCP 探活，不请求 /v1/models，避免健康检查消耗上游额度。
+# 启动时会先同步一次上游模型列表，期间不监听端口（实测阻塞 30-40s，
+# 上游超时叠加时更久），故 start-period 放宽，避免被误判为 unhealthy。
+HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
     CMD ["python", "-c", "import socket,sys; s=socket.socket(); s.settimeout(3); sys.exit(0 if s.connect_ex(('127.0.0.1',8787))==0 else 1)"]
 
 # 上游文档以 Ctrl+C 停止服务，对应 SIGINT，容器停止时优雅退出
