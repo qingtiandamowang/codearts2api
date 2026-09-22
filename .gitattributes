@@ -1,0 +1,7 @@
+# 本项目面向 Linux 容器，统一使用 LF。
+# 避免 Windows 下 core.autocrlf 把 Dockerfile / YAML 转成 CRLF 导致构建或工作流异常。
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary

@@ -51,6 +51,63 @@ http://127.0.0.1:8787/v1
 
 支持的工具示例：OpenCode、Cline、Continue、LobeChat、Cherry Studio 等所有支持自定义 OpenAI 兼容端点的工具。
 
+## Docker 部署
+
+镜像基于 `python:3.12-slim-bookworm`（Debian 12），以非 root 用户运行，并已将监听地址改为
+容器内 `0.0.0.0:8787`，因此端口映射可正常生效。
+
+### 方式一：docker compose（推荐）
+
+在项目目录下准备好 `.env`（内容同第 2 步），然后：
+
+```bash
+docker compose up -d
+```
+
+访问 `http://127.0.0.1:8787/v1`。默认只绑定宿主机回环地址，需要局域网访问时把
+`docker-compose.yml` 中的 `"127.0.0.1:8787:8787"` 改为 `"8787:8787"`。
+
+### 方式二：直接构建运行
+
+```bash
+docker build -t codearts2api:latest .
+
+docker run -d --name codearts2api \
+  --restart unless-stopped \
+  -p 127.0.0.1:8787:8787 \
+  -e CODEARTS_AK=你的AccessKey \
+  -e CODEARTS_SK=你的SecretKey \
+  codearts2api:latest
+```
+
+### 使用预构建的 x86_64 镜像
+
+仓库通过 GitHub Actions 自动构建 `linux/amd64` 镜像并推送到 GHCR：
+
+```bash
+docker pull ghcr.io/qingtiandamowang/codearts2api:latest
+```
+
+> GHCR 的包默认是私有的。若拉取时报 `denied`，请在仓库的 `Packages` 页面把该包改为
+> Public，或先执行 `docker login ghcr.io` 并使用具备 `read:packages` 权限的 Token。
+
+### 每日自动签到
+
+`benefit.py` 已打进镜像，可直接调用：
+
+```bash
+docker exec codearts2api python benefit.py claim
+```
+
+### 环境变量
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `CODEARTS_AK` | 无（必填） | 华为云 AccessKey |
+| `CODEARTS_SK` | 无（必填） | 华为云 SecretKey |
+| `CODEARTS_PROXY_HOST` | `127.0.0.1`（镜像内已设为 `0.0.0.0`） | 监听地址 |
+| `CODEARTS_PROXY_PORT` | `8787` | 监听端口 |
+
 ## 本地测试
 
 ```cmd
@@ -68,10 +125,16 @@ python test_openai.py
 
 ```text
 codearts2api/
-├── .env               # AK/SK
-├── server.py          # 主服务：签名 + 转发
-├── requirements.txt   # Python 依赖
-├── test_openai.py     # 本地测试脚本
+├── .env                    # AK/SK
+├── server.py               # 主服务：签名 + 转发
+├── benefit.py              # 免费额度签到 / 余额查询
+├── requirements.txt        # Python 依赖
+├── test_openai.py          # 本地测试脚本
+├── models-cache.json       # 模型列表缓存
+├── Dockerfile              # x86_64 镜像定义
+├── docker-compose.yml      # 一键部署
+├── .github/workflows/
+│   └── docker-build.yml    # 自动构建 linux/amd64 镜像并推送 GHCR
 └── README.md
 ```
 

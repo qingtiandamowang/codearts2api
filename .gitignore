@@ -1,0 +1,13 @@
+# 密钥文件，绝不能提交（AK/SK 具有华为云账号最高权限）
+.env
+.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 缓存临时文件
+models-cache.json.tmp
+*.tmp

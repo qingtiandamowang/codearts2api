@@ -1,0 +1,27 @@
+# 绝不把密钥打进镜像层
+.env
+.env.*
+!.env.example
+
+.git
+.gitignore
+.github
+
+# 本地缓存/临时产物
+__pycache__/
+*.py[cod]
+*.tmp
+models-cache.json.tmp
+.venv/
+venv/
+
+# 编辑器与文档
+.vscode/
+.idea/
+*.md
+LICENSE
+
+# Docker 自身
+Dockerfile
+docker-compose.yml
+.dockerignore
